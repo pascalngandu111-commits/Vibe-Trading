@@ -1,8 +1,14 @@
 import { Suspense, lazy, type ComponentType } from "react";
 import { createBrowserRouter } from "react-router-dom";
-import { Layout } from "@/components/layout/Layout";
+import { AppLayout } from "@/components/layout/Layout";
+import { MarketingLayout } from "@/components/layout/MarketingLayout";
 
 const Home = lazy(() => import("@/pages/Home").then((m) => ({ default: m.Home })));
+const About = lazy(() => import("@/pages/About").then((m) => ({ default: m.About })));
+const Founder = lazy(() => import("@/pages/Founder").then((m) => ({ default: m.Founder })));
+const Pricing = lazy(() => import("@/pages/Pricing").then((m) => ({ default: m.Pricing })));
+const Security = lazy(() => import("@/pages/Security").then((m) => ({ default: m.Security })));
+const Contact = lazy(() => import("@/pages/Contact").then((m) => ({ default: m.Contact })));
 const Agent = lazy(() => import("@/pages/Agent").then((m) => ({ default: m.Agent })));
 const RunDetail = lazy(() =>
   import("@/pages/RunDetail").then((m) => ({ default: m.RunDetail })),
@@ -18,6 +24,12 @@ const Runtime = lazy(() =>
 );
 const Reports = lazy(() =>
   import("@/pages/Reports").then((m) => ({ default: m.Reports })),
+);
+const PerformanceLab = lazy(() =>
+  import("@/pages/PerformanceLab").then((m) => ({ default: m.PerformanceLab })),
+);
+const RiskManager = lazy(() =>
+  import("@/pages/RiskManager").then((m) => ({ default: m.RiskManager })),
 );
 const Correlation = lazy(() =>
   import("@/pages/Correlation").then((m) => ({ default: m.Correlation })),
@@ -44,12 +56,24 @@ function wrap(Component: ComponentType) {
 
 export const router = createBrowserRouter([
   {
-    element: <Layout />,
+    element: <MarketingLayout />,
     children: [
       { path: "/", element: wrap(Home) },
+      { path: "/about", element: wrap(About) },
+      { path: "/founder", element: wrap(Founder) },
+      { path: "/pricing", element: wrap(Pricing) },
+      { path: "/security", element: wrap(Security) },
+      { path: "/contact", element: wrap(Contact) },
+    ],
+  },
+  {
+    element: <AppLayout />,
+    children: [
       { path: "/agent", element: wrap(Agent) },
       { path: "/runtime", element: wrap(Runtime) },
       { path: "/reports", element: wrap(Reports) },
+      { path: "/performance-lab", element: wrap(PerformanceLab) },
+      { path: "/risk-manager", element: wrap(RiskManager) },
       { path: "/settings", element: wrap(Settings) },
       { path: "/runs/:runId", element: wrap(RunDetail) },
       { path: "/compare", element: wrap(Compare) },

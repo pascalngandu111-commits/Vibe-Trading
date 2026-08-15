@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from math import ceil
 from concurrent.futures import (
     Future,
     ThreadPoolExecutor,
@@ -44,6 +45,21 @@ from src.tools.redaction import redact_internal_paths
 from src.swarm.worker import run_worker
 
 logger = logging.getLogger(__name__)
+
+
+def _capacity_aware_layer_deadline(
+    submitted_tasks: int,
+    effective_workers: int,
+    maximum_per_task_budget: int,
+    deadline_buffer: int,
+) -> int | None:
+    """Return a layer deadline scaled for sequential worker-capacity waves."""
+    if submitted_tasks <= 0 or maximum_per_task_budget <= 0:
+        return None
+
+    workers = max(1, effective_workers)
+    waves = ceil(submitted_tasks / workers)
+    return maximum_per_task_budget * waves + deadline_buffer
 
 
 class SwarmRuntime:
@@ -444,7 +460,7 @@ class SwarmRuntime:
                 interval=interval,
                 emit=_on_grounding_heartbeat,
             ):
-                fetched = grounding.fetch_grounding_data(symbols)
+                fetched = grounding.fetch_multitimeframe_grounding_data(symbols)
         except Exception:
             logger.warning(
                 "grounding: pre-fetch failed for run %s symbols=%s",
@@ -589,9 +605,16 @@ class SwarmRuntime:
 
             # Collect results with a hard layer-level deadline — defends against
             # worker threads stuck in C extensions / blocked I/O that bypass the
-            # in-loop timeout check (issue #42).
+            # in-loop timeout check (issue #42). Scale by the number of
+            # sequential execution waves required when worker capacity is lower
+            # than the number of tasks actually submitted.
             deadline_buffer = 60
-            layer_deadline = layer_budget + deadline_buffer if layer_budget else None
+            layer_deadline = _capacity_aware_layer_deadline(
+                submitted_tasks=len(futures),
+                effective_workers=self._max_workers,
+                maximum_per_task_budget=layer_budget,
+                deadline_buffer=deadline_buffer,
+            )
 
             try:
                 for future in as_completed(futures, timeout=layer_deadline):

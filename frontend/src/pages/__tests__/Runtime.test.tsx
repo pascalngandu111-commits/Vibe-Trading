@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Runtime } from "../Runtime";
 import type { LiveStatus } from "@/lib/api";
 
@@ -84,7 +84,7 @@ describe("Runtime page", () => {
 
     render(<Runtime />);
 
-    expect(await screen.findByText("Live / Paper Runtime Status")).toBeInTheDocument();
+    expect(await screen.findByText("Intelligence Runtime Status")).toBeInTheDocument();
     expect(screen.getByText("Clear")).toBeInTheDocument();
     expect(screen.getByText("paper")).toBeInTheDocument();
     expect(screen.getByText("auth present")).toBeInTheDocument();
@@ -99,12 +99,15 @@ describe("Runtime page", () => {
 
   it("fails closed when live status is unavailable", async () => {
     apiMock.getLiveStatus.mockRejectedValue(new Error("backend offline"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     render(<Runtime />);
 
     expect(await screen.findByText("Runtime status unavailable")).toBeInTheDocument();
     expect(screen.getByText("backend offline")).toBeInTheDocument();
     expect(screen.getByText(/Treat connector runtime as unavailable/)).toBeInTheDocument();
+    expect(warning).toHaveBeenCalledWith("Failed to load runtime status", expect.any(Error));
+    warning.mockRestore();
   });
 
   it("refreshes by reading live status again", async () => {
@@ -115,7 +118,7 @@ describe("Runtime page", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
-    expect(apiMock.getLiveStatus).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(apiMock.getLiveStatus).toHaveBeenCalledTimes(2));
   });
 
   it("keeps the newest live status when an older request resolves later", async () => {

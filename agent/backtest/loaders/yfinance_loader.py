@@ -1,4 +1,4 @@
-"""yfinance-backed loader for HK/US equity OHLCV data."""
+"""yfinance-backed loader for equity, crypto, and forex OHLCV data."""
 
 from __future__ import annotations
 
@@ -55,6 +55,16 @@ def _to_yfinance_symbol(code: str) -> str:
         digits = upper[:-3]
         width = max(4, len(digits))
         return f"{digits.zfill(width)}.HK"
+    # Forex: EUR/USD or EURUSD.FX -> EURUSD=X.
+    if (
+        len(upper) == 7
+        and upper[3] == "/"
+        and upper[:3].isalpha()
+        and upper[4:].isalpha()
+    ):
+        return upper.replace("/", "") + "=X"
+    if upper.endswith(".FX") and len(upper) == 9 and upper[:-3].isalpha():
+        return upper[:-3] + "=X"
     # Crypto: BTC-USDT -> BTC-USD, ETH-USDT -> ETH-USD, etc.
     if upper.endswith("-USDT"):
         return upper[:-5] + "-USD"
@@ -211,10 +221,10 @@ def _normalize_frame(frame: pd.DataFrame, requested_interval: str) -> pd.DataFra
 
 @register
 class DataLoader:
-    """Fetch HK/US equity bars from Yahoo Finance via yfinance."""
+    """Fetch equity, crypto, and forex bars from Yahoo Finance via yfinance."""
 
     name = "yfinance"
-    markets = {"us_equity", "hk_equity", "india_equity", "crypto"}
+    markets = {"us_equity", "hk_equity", "india_equity", "crypto", "forex"}
     requires_auth = False
 
     def is_available(self) -> bool:
@@ -240,7 +250,8 @@ class DataLoader:
         """Fetch OHLCV history keyed by the original project symbols.
 
         Args:
-            codes: Project symbols such as ``AAPL.US`` and ``700.HK``.
+            codes: Project symbols such as ``AAPL.US``, ``700.HK``, and
+                ``EUR/USD`` or ``EURUSD.FX``.
             start_date: Start date in ``YYYY-MM-DD`` format.
             end_date: End date in ``YYYY-MM-DD`` format.
             fields: Ignored for yfinance; included for interface compatibility.

@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { Bot, TrendingUp, Globe, Sparkles, Users, UserCircle2, NotebookPen, Landmark, Gem } from "lucide-react";
+import { TrendingUp, Globe, Sparkles, Users, UserCircle2, NotebookPen, Landmark, Gem } from "lucide-react";
+import { Logo } from "@/components/brand/Logo";
 
 interface Example {
   titleKey: string;
@@ -206,9 +207,7 @@ export function WelcomeScreen({ onExample }: Props) {
     <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8 text-center">
       {/* Header */}
       <div className="space-y-3">
-        <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-primary/80 to-info/80 flex items-center justify-center shadow-lg">
-          <Bot className="h-8 w-8 text-white" />
-        </div>
+        <Logo className="mx-auto h-16 w-16 rounded-2xl shadow-lg" />
         <div>
           <h2 className="text-2xl font-bold tracking-tight">{t('welcome.title')}</h2>
           <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto leading-relaxed">
@@ -219,6 +218,8 @@ export function WelcomeScreen({ onExample }: Props) {
           </p>
         </div>
       </div>
+
+      <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 text-xs leading-5 text-muted-foreground max-w-2xl">TradeCoreFX provides analytical and educational tools. Outputs may be incomplete or incorrect, especially when using small local models. Independently verify market information before making financial decisions.</div>
 
       {/* Capability chips */}
       <div className="flex flex-wrap justify-center gap-2 max-w-lg">
@@ -236,7 +237,7 @@ export function WelcomeScreen({ onExample }: Props) {
       <div className="w-full max-w-2xl text-left space-y-4">
         <p className="text-xs text-muted-foreground px-1">{t('welcome.tryExample')}</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {CATEGORIES.map((cat) => (
+          {CATEGORIES.slice(0, 6).map((cat) => (
             <div key={cat.labelKey} className="space-y-2">
               <div className={`flex items-center gap-1.5 text-xs font-medium px-1 ${cat.color.split(" ").filter(c => c.startsWith("text-")).join(" ")}`}>
                 {cat.icon}

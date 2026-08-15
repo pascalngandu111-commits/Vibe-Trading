@@ -2140,7 +2140,11 @@ def cmd_swarm_run_live(preset: str, vars_json: Optional[str] = None) -> Optional
 
     store = SwarmStore(base_dir=SWARM_DIR)
     agent_config = load_swarm_agent_config()
-    runtime = SwarmRuntime(store=store, agent_config=agent_config)
+    runtime = SwarmRuntime(
+        store=store,
+        max_workers=get_env_config().swarm.swarm_max_workers,
+        agent_config=agent_config,
+    )
     _agent_color_map.clear()
 
     console.print(f"\n[dim]Starting swarm:[/dim] [cyan]{preset}[/cyan]")

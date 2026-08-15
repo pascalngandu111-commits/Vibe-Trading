@@ -6,19 +6,19 @@ function Thrower({ message }: { message: string }): React.ReactElement {
   throw new Error(message);
 }
 
-// Suppress React error boundary console.error in tests
-const originalError = console.error;
-beforeAll(() => {
-  console.error = (...args: unknown[]) => {
-    if (typeof args[0] === "string" && args[0].includes("ErrorBoundary")) return;
-    originalError(...args);
-  };
-});
-afterAll(() => {
-  console.error = originalError;
-});
-
 describe("ErrorBoundary", () => {
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    // React reports deliberately thrown render errors to console.error before
+    // the boundary renders its fallback. Keep this scoped to this test file.
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
   it("renders children normally when no error", () => {
     render(
       <ErrorBoundary>

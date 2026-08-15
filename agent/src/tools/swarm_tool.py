@@ -32,6 +32,18 @@ def _max_wait_seconds() -> int:
 # Preset matching: (preset_name, keyword_patterns, weight_boost). Patterns match user intent (EN + ZH).
 _PRESET_KEYWORDS: list[tuple[str, list[str], float]] = [
     (
+        "tradecorefx_forex_desk",
+        [
+            r"\b[A-Z]{3}/[A-Z]{3}\b",
+            r"\b[A-Z]{6}\.FX\b",
+            r"\btradecorefx\b",
+            r"\bforex\b",
+            r"\bcurrency\s+pair\b",
+            r"\bfx\s+(?:analysis|setup|trade|signal)\b",
+        ],
+        3.0,
+    ),
+    (
         "global_allocation_committee",
         [
             r"cross[- ]?market",
@@ -594,6 +606,16 @@ def _snippet(prompt: str, max_len: int = 240) -> str:
     return s if len(s) <= max_len else s[: max_len - 3] + "..."
 
 
+def _extract_fx_target(prompt: str) -> str:
+    """Extract a slash or .FX project pair from a TradeCoreFX request."""
+    match = re.search(
+        r"(?<![A-Z])(?:[A-Z]{3}/[A-Z]{3}|[A-Z]{6}\.FX)(?![A-Z])",
+        prompt,
+        re.IGNORECASE,
+    )
+    return match.group(0).upper() if match else _snippet(prompt)
+
+
 def _build_variables(preset_name: str, prompt: str) -> dict[str, str]:
     """Build template variables from prompt for the matched preset.
 
@@ -611,6 +633,10 @@ def _build_variables(preset_name: str, prompt: str) -> dict[str, str]:
 
     # Preset-specific variable sets (see agent/src/swarm/presets/*.yaml).
     builders: dict[str, dict[str, str]] = {
+        "tradecorefx_forex_desk": {
+            "target": _extract_fx_target(prompt),
+            "timeframe": "multi-timeframe 1D/4H/1H",
+        },
         "global_allocation_committee": {"goal": g, "risk_tolerance": risk},
         "equity_research_team": {"market": market, "goal": g},
         "quant_strategy_desk": {"market": market, "goal": g},

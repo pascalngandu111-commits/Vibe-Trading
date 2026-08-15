@@ -51,9 +51,13 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            "vendor-react": ["react", "react-dom", "react-router-dom"],
-            "vendor-charts": ["echarts"],
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return;
+            if (id.includes("echarts")) return "vendor-charts";
+            if (id.includes("react-dom") || id.includes("react-router-dom") || /node_modules\/react\//.test(id)) return "vendor-react";
+            if (id.includes("react-markdown") || id.includes("remark-") || id.includes("rehype-") || id.includes("highlight.js")) return "vendor-markdown";
+            if (id.includes("lucide-react") || id.includes("sonner")) return "vendor-ui";
+            if (id.includes("i18next")) return "vendor-i18n";
           },
         },
       },
