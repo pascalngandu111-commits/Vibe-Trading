@@ -17,6 +17,63 @@ from fastapi.responses import StreamingResponse
 # ---------------------------------------------------------------------------
 
 _swarm_runtime = None
+TRADECOREFX_PRESET = "tradecorefx_forex_desk"
+
+
+def _tradecorefx_view(run) -> tuple[dict | None, str]:
+    """Rebuild the binding report at every read boundary."""
+    if run.preset_name != TRADECOREFX_PRESET:
+        return None, "NOT_APPLICABLE"
+    status = getattr(run.status, "value", run.status)
+    if status in {"pending", "running"} and run.tradecorefx_validation is None:
+        return None, "PENDING"
+    from src.swarm.tradecorefx_validation import build_captured_provider_validation_report
+
+    rebuilt = build_captured_provider_validation_report(
+        run.user_vars.get("target"), run.grounding_data or {}, run_id=run.id,
+    )
+    try:
+        intact = json.dumps(run.tradecorefx_validation, sort_keys=True, allow_nan=False) == json.dumps(
+            rebuilt, sort_keys=True, allow_nan=False
+        )
+    except (TypeError, ValueError, OverflowError):
+        intact = False
+    return rebuilt, "VERIFIED" if intact else "FAILED_REBUILT_SAFE"
+
+
+def _tradecorefx_summary(run, report: dict | None, integrity: str) -> dict:
+    bars = report.get("bar_evidence", {}) if report else {}
+    applicable = run.preset_name == TRADECOREFX_PRESET
+    audit_state = (
+        "NOT_APPLICABLE"
+        if not applicable
+        else "PENDING"
+        if integrity == "PENDING"
+        else "PASSED"
+        if report and report.get("audit", {}).get("passed")
+        else "FAILED"
+    )
+    return {
+        "is_tradecorefx": applicable,
+        "pair": report.get("pair") if report else None,
+        "requested_horizon": run.user_vars.get("horizon") if run.preset_name == TRADECOREFX_PRESET else None,
+        "data_provider": report.get("data_provider") if report else None,
+        "llm_provider": run.provider,
+        "model": run.model,
+        "capture_time": report.get("capture_time") if report else None,
+        "evidence_label": report.get("evidence_label") if report else None,
+        "decision": report.get("final_decision") if report else None,
+        "audit_state": audit_state,
+        "integrity_state": integrity,
+        "timeframe_summary": {
+            timeframe: {
+                key: evidence.get(key)
+                for key in ("last_bar_at", "freshness", "history_status", "bars")
+            }
+            for timeframe, evidence in bars.items()
+            if timeframe in {"1D", "4H", "1H"} and isinstance(evidence, dict)
+        },
+    }
 
 
 def _get_swarm_runtime():
@@ -119,6 +176,7 @@ def register_swarm_routes(
             # Reconcile each row: a zombie running run will be auto-finalized so
             # the dashboard never shows a "running" stuck row.
             reconciled = runtime._store.reconcile_run(r, write=True)
+            validation, integrity = _tradecorefx_view(reconciled)
             items.append(
                 {
                     "id": reconciled.id,
@@ -131,6 +189,7 @@ def register_swarm_routes(
                     "completed_count": sum(
                         1 for t in reconciled.tasks if t.status.value == "completed"
                     ),
+                    **_tradecorefx_summary(reconciled, validation, integrity),
                 }
             )
         return items
@@ -145,6 +204,7 @@ def register_swarm_routes(
             raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
         run = runtime._store.reconcile_run(loaded, write=True)
+        validation, integrity = _tradecorefx_view(run)
 
         return {
             "id": run.id,
@@ -157,6 +217,8 @@ def register_swarm_routes(
             "created_at": run.created_at,
             "completed_at": run.completed_at,
             "final_report": run.final_report,
+            "tradecorefx_validation": validation,
+            **_tradecorefx_summary(run, validation, integrity),
         }
 
     @app.get(

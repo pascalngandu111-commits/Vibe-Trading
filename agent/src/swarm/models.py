@@ -191,6 +191,7 @@ class SwarmRun(BaseModel):
     provider: str | None = None
     model: str | None = None
     grounding_data: dict[str, list[dict]] | None = None
+    tradecorefx_validation: dict | None = None
 
 
 class WorkerResult(BaseModel):

@@ -37,6 +37,7 @@ const Correlation = lazy(() =>
 const AlphaZoo = lazy(() =>
   import("@/pages/AlphaZoo").then((m) => ({ default: m.AlphaZoo })),
 );
+const MarketIntelligence = lazy(() => import("@/pages/MarketIntelligence").then((m) => ({ default: m.MarketIntelligence })));
 
 function PageLoader() {
   return (
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
     children: [
       { path: "/agent", element: wrap(Agent) },
       { path: "/runtime", element: wrap(Runtime) },
+      { path: "/market-intelligence", element: wrap(MarketIntelligence) },
       { path: "/reports", element: wrap(Reports) },
       { path: "/performance-lab", element: wrap(PerformanceLab) },
       { path: "/risk-manager", element: wrap(RiskManager) },

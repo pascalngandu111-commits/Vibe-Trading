@@ -148,7 +148,7 @@ export const api = {
       body: JSON.stringify({ preset_name, user_vars }),
     }),
   listSwarmRuns: () => request<SwarmRunSummary[]>("/swarm/runs"),
-  getSwarmRun: (id: string) => request<Record<string, unknown>>(`/swarm/runs/${id}`),
+  getSwarmRun: (id: string) => request<SwarmRunDetail>(`/swarm/runs/${id}`),
   swarmSseUrl: (id: string) => withAuthTicket(`${BASE}/swarm/runs/${id}/events`),
   cancelSwarmRun: (id: string) =>
     request<{ status: string }>(`/swarm/runs/${id}/cancel`, { method: "POST" }),
@@ -252,6 +252,36 @@ export interface SwarmRunSummary {
   created_at: string;
   task_count: number;
   completed_count: number;
+  completed_at?: string | null;
+  is_tradecorefx?: boolean;
+  pair?: string | null;
+  requested_horizon?: string | null;
+  data_provider?: string | null;
+  llm_provider?: string | null;
+  model?: string | null;
+  capture_time?: string | null;
+  evidence_label?: TradeCoreFXEvidenceLabel | null;
+  decision?: TradeCoreFXDecision | null;
+  audit_state?: "PASSED" | "FAILED" | "PENDING" | "NOT_APPLICABLE";
+  integrity_state?: "VERIFIED" | "FAILED_REBUILT_SAFE" | "PENDING" | "NOT_APPLICABLE";
+  timeframe_summary?: Record<string, TradeCoreFXTimeframeSummary>;
+}
+
+export type TradeCoreFXDecision = "LONG_SETUP" | "SHORT_SETUP" | "WAIT" | "NO_TRADE_DATA";
+export type TradeCoreFXEvidenceLabel = "SIMULATED" | "CAPTURED_FIXTURE" | "CAPTURED_PROVIDER";
+export interface TradeCoreFXTimeframeSummary { last_bar_at?: string | null; freshness?: string; history_status?: string | null; bars?: number }
+export interface TradeCoreFXValidationReport {
+  pair?: string; evidence_label?: TradeCoreFXEvidenceLabel; data_provider?: string | null;
+  capture_time?: string | null; final_decision?: TradeCoreFXDecision;
+  confidence?: { total?: number; cap?: number };
+  binding_data_gate?: { status?: string; reasons?: string[] };
+  binding_risk_gate?: { status?: string; reasons?: string[] };
+  macro?: { status?: string }; audit?: { passed?: boolean; issues?: { message?: string }[] };
+  dissent?: string[]; recheck_condition?: string; disclosure?: string;
+  bar_evidence?: Record<string, TradeCoreFXTimeframeSummary & { source?: string | null; captured_at?: string | null }>;
+}
+export interface SwarmRunDetail extends SwarmRunSummary {
+  user_vars?: Record<string, string>; tradecorefx_validation?: TradeCoreFXValidationReport | null;
 }
 
 export interface LLMProviderOption {
