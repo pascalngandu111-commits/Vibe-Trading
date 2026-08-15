@@ -13,7 +13,16 @@ const summary = { id:"r1", preset_name:"tradecorefx_forex_desk", status:"complet
 const detail = { ...summary, completed_at:"2026-08-14T13:00:00Z", llm_provider:null, model:null, integrity_state:"VERIFIED", audit_state:"PASSED", tradecorefx_validation:{ pair:"EUR/USD", final_decision:"WAIT", evidence_label:"CAPTURED_PROVIDER", data_provider:"yfinance", capture_time:"2026-08-14T12:00:00Z", confidence:{total:50,cap:50}, binding_data_gate:{status:"PASS",reasons:[]}, binding_risk_gate:{status:"FAIL",reasons:["verified current macro support unavailable"]}, macro:{status:"UNAVAILABLE"}, audit:{passed:true}, dissent:[], recheck_condition:"Refresh failed evidence", disclosure:"Decision support only; no guarantee.", bar_evidence:Object.fromEntries(["1D","4H","1H"].map(tf=>[tf,{source:"yfinance",captured_at:"2026-08-14T12:00:00Z",last_bar_at:"2026-08-14T11:00:00Z",freshness:"FRESH",history_status:"ok",bars:220}])) } };
 
 describe("MarketIntelligence", () => {
-  beforeEach(() => { vi.mocked(api.listSwarmRuns).mockResolvedValue([summary]); vi.mocked(api.getSwarmRun).mockResolvedValue(detail); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.listSwarmRuns).mockResolvedValue([summary]);
+    vi.mocked(api.getSwarmRun).mockResolvedValue(detail);
+  });
+  it("requests the TradeCoreFX preset from the server", async () => {
+    render(<MarketIntelligence/>);
+    await screen.findByText("WAIT");
+    expect(api.listSwarmRuns).toHaveBeenCalledWith("tradecorefx_forex_desk");
+  });
   it("renders binding WAIT evidence and separate provider metadata without execution claims", async () => {
     render(<MarketIntelligence/>);
     await screen.findByText("WAIT");
@@ -78,5 +87,81 @@ describe("MarketIntelligence", () => {
     await screen.findByText("WAIT");
     expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/Unavailable/).length).toBeGreaterThan(0);
+  });
+  it("keeps the latest manual selection when detail promises settle out of order", async () => {
+    const secondSummary = { ...summary, id: "r2", pair: "GBP/USD" };
+    const deferred: Record<string, { promise: Promise<typeof detail>; resolve: (value: typeof detail) => void; reject: (reason?: unknown) => void }> = {};
+    const makeDeferred = (id: string) => {
+      let resolve!: (value: typeof detail) => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<typeof detail>((res, rej) => { resolve = res; reject = rej; });
+      deferred[id] = { promise, resolve, reject };
+      return promise;
+    };
+    let initialLoad = true;
+    vi.mocked(api.listSwarmRuns).mockResolvedValue([summary, secondSummary]);
+    vi.mocked(api.getSwarmRun).mockImplementation((id) => {
+      if (initialLoad) { initialLoad = false; return Promise.resolve(detail); }
+      return deferred[id]?.promise ?? makeDeferred(id);
+    });
+    render(<MarketIntelligence/>);
+    await screen.findByText("WAIT");
+
+    const buttons = screen.getAllByRole("button", { name: /EUR\/USD|GBP\/USD/ });
+    await userEvent.click(buttons[0]);
+    await userEvent.click(buttons[1]);
+    deferred.r2.resolve({ ...detail, id: "r2", requested_horizon: "latest-selection" });
+    await screen.findByText(/latest-selection/);
+    deferred.r1.reject(new Error("stale failure"));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByText(/latest-selection/)).toBeInTheDocument();
+  });
+  it("ignores a stale successful detail response after the latest selection", async () => {
+    const secondSummary = { ...summary, id: "r2", pair: "GBP/USD" };
+    let initialLoad = true;
+    let resolveFirst!: (value: typeof detail) => void;
+    let resolveSecond!: (value: typeof detail) => void;
+    const first = new Promise<typeof detail>((resolve) => { resolveFirst = resolve; });
+    const second = new Promise<typeof detail>((resolve) => { resolveSecond = resolve; });
+    vi.mocked(api.listSwarmRuns).mockResolvedValue([summary, secondSummary]);
+    vi.mocked(api.getSwarmRun).mockImplementation((id) => {
+      if (initialLoad) { initialLoad = false; return Promise.resolve(detail); }
+      return id === "r1" ? first : second;
+    });
+    render(<MarketIntelligence/>);
+    await screen.findByText("WAIT");
+
+    const buttons = screen.getAllByRole("button", { name: /EUR\/USD|GBP\/USD/ });
+    await userEvent.click(buttons[0]);
+    await userEvent.click(buttons[1]);
+    resolveSecond({ ...detail, id: "r2", requested_horizon: "latest-success" });
+    await screen.findByText(/latest-success/);
+    resolveFirst({ ...detail, id: "r1", requested_horizon: "stale-success" });
+    await waitFor(() => expect(screen.queryByText(/stale-success/)).not.toBeInTheDocument());
+    expect(screen.getByText(/latest-success/)).toBeInTheDocument();
+  });
+  it("does not let a stale refresh detail replace a newer manual selection", async () => {
+    const secondSummary = { ...summary, id: "r2", pair: "GBP/USD" };
+    let initialLoad = true;
+    let resolveRefresh!: (value: typeof detail) => void;
+    let resolveManual!: (value: typeof detail) => void;
+    const refreshDetail = new Promise<typeof detail>((resolve) => { resolveRefresh = resolve; });
+    const manualDetail = new Promise<typeof detail>((resolve) => { resolveManual = resolve; });
+    vi.mocked(api.listSwarmRuns).mockResolvedValue([summary, secondSummary]);
+    vi.mocked(api.getSwarmRun).mockImplementation((id) => {
+      if (initialLoad) { initialLoad = false; return Promise.resolve(detail); }
+      return id === "r1" ? refreshDetail : manualDetail;
+    });
+    render(<MarketIntelligence/>);
+    await screen.findByText("WAIT");
+
+    await userEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await waitFor(() => expect(api.getSwarmRun).toHaveBeenCalledTimes(2));
+    await userEvent.click(screen.getByRole("button", { name: /GBP\/USD/ }));
+    resolveManual({ ...detail, id: "r2", requested_horizon: "manual-latest" });
+    await screen.findByText(/manual-latest/);
+    resolveRefresh({ ...detail, id: "r1", requested_horizon: "refresh-stale" });
+    await waitFor(() => expect(screen.queryByText(/refresh-stale/)).not.toBeInTheDocument());
+    expect(screen.getByText(/manual-latest/)).toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Database, RefreshCw } from "lucide-react";
 import { api, type SwarmRunDetail, type SwarmRunSummary, type TradeCoreFXDecision } from "@/lib/api";
 
@@ -34,17 +34,33 @@ export function MarketIntelligence() {
   const [selected, setSelected] = useState<SwarmRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
   const load = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     setLoading(true); setError(null);
     try {
-      const list = (await api.listSwarmRuns()).filter((run) => run.is_tradecorefx || run.preset_name === "tradecorefx_forex_desk");
+      const list = await api.listSwarmRuns("tradecorefx_forex_desk");
+      if (generation !== requestGeneration.current) return;
       setRuns(list);
-      setSelected(list[0] ? await api.getSwarmRun(list[0].id) : null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Market intelligence is unavailable"); }
-    finally { setLoading(false); }
+      const detail = list[0] ? await api.getSwarmRun(list[0].id) : null;
+      if (generation === requestGeneration.current) setSelected(detail);
+    } catch (cause) {
+      if (generation === requestGeneration.current) setError(cause instanceof Error ? cause.message : "Market intelligence is unavailable");
+    } finally {
+      if (generation === requestGeneration.current) setLoading(false);
+    }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  const choose = async (id: string) => { try { setError(null); setSelected(await api.getSwarmRun(id)); } catch { setError("Run detail is unavailable"); } };
+  const choose = async (id: string) => {
+    const generation = ++requestGeneration.current;
+    setLoading(false); setError(null);
+    try {
+      const detail = await api.getSwarmRun(id);
+      if (generation === requestGeneration.current) setSelected(detail);
+    } catch {
+      if (generation === requestGeneration.current) setError("Run detail is unavailable");
+    }
+  };
   const report = selected?.tradecorefx_validation;
   const decision = safeDecision(selected);
   return <main className="min-h-screen p-4 md:p-8"><div className="mx-auto max-w-7xl space-y-6">

@@ -147,7 +147,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ preset_name, user_vars }),
     }),
-  listSwarmRuns: () => request<SwarmRunSummary[]>("/swarm/runs"),
+  listSwarmRuns: (presetName?: string) => request<SwarmRunSummary[]>(
+    presetName ? appendQueryParam("/swarm/runs", "preset_name", presetName) : "/swarm/runs",
+  ),
   getSwarmRun: (id: string) => request<SwarmRunDetail>(`/swarm/runs/${id}`),
   swarmSseUrl: (id: string) => withAuthTicket(`${BASE}/swarm/runs/${id}/events`),
   cancelSwarmRun: (id: string) =>

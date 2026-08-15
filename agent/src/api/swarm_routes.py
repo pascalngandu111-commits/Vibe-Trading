@@ -167,10 +167,13 @@ def register_swarm_routes(
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/swarm/runs", dependencies=[Depends(require_auth)])
-    async def list_swarm_runs(limit: int = Query(20, ge=1, le=100)):
+    async def list_swarm_runs(
+        limit: int = Query(20, ge=1, le=100),
+        preset_name: str | None = Query(None),
+    ):
         """List swarm runs (newest first), reconciled."""
         runtime = _get_swarm_runtime()
-        runs = runtime._store.list_runs(limit=limit)
+        runs = runtime._store.list_runs(limit=limit, preset_name=preset_name)
         items = []
         for r in runs:
             # Reconcile each row: a zombie running run will be auto-finalized so

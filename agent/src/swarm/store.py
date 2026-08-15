@@ -214,11 +214,12 @@ class SwarmStore:
             raise FileNotFoundError(f"Run directory not found: {rd.name}")
         self._atomic_write(rd / "run.json", run.model_dump_json(indent=2))
 
-    def list_runs(self, limit: int = 50) -> list[SwarmRun]:
+    def list_runs(self, limit: int = 50, preset_name: str | None = None) -> list[SwarmRun]:
         """List all runs sorted by created_at descending.
 
         Args:
             limit: Maximum number of runs to return.
+            preset_name: Optional exact preset name to filter before limiting.
 
         Returns:
             List of SwarmRun instances.
@@ -234,7 +235,8 @@ class SwarmStore:
             if run_file.exists():
                 try:
                     run = SwarmRun.model_validate_json(run_file.read_text(encoding="utf-8"))
-                    runs.append(run)
+                    if preset_name is None or run.preset_name == preset_name:
+                        runs.append(run)
                 except (json.JSONDecodeError, ValueError):
                     continue
 
