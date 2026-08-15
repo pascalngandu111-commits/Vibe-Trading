@@ -42,6 +42,7 @@ export function AppLayout() {
         { to: "/alpha-zoo", icon: Layers, label: t('layout.alphaZoo') },
         { to: "/correlation", icon: BarChart3, label: t('layout.correlation') },
         { to: "/runtime", icon: Activity, label: t('layout.runtime') },
+        { to: "/market-intelligence", icon: Database, label: "Market Intelligence" },
       ],
     },
     {
@@ -85,6 +86,7 @@ export function AppLayout() {
     if (pathname.startsWith("/alpha-zoo")) return t('layout.alphaZoo');
     if (pathname.startsWith("/correlation")) return t('layout.correlation');
     if (pathname.startsWith("/runtime")) return t('layout.runtime');
+    if (pathname.startsWith("/market-intelligence")) return "Market Intelligence";
     if (pathname.startsWith("/settings")) return t('layout.settings');
     return "TradeCoreFX";
   })();

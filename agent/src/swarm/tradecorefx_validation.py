@@ -42,7 +42,8 @@ MIXED_DATA_PROVIDERS_REASON = (
 MACRO_MAX_AGE = timedelta(hours=24)
 REPORT_SCHEMA_VERSION = "tradecorefx.beta.batch1.v1"
 AUDIT_SCHEMA_VERSION = "tradecorefx.audit.batch1.v1"
-EVIDENCE_LABELS = {"SIMULATED", "CAPTURED_FIXTURE"}
+EVIDENCE_LABELS = {"SIMULATED", "CAPTURED_FIXTURE", "CAPTURED_PROVIDER"}
+APPROVED_PUBLIC_PROVIDERS = {"yfinance"}
 PROPOSED_LEVEL_FIELDS = {
     "direction", "entry", "stop", "target", "entry_ref", "stop_ref", "target_ref"
 }
@@ -86,7 +87,7 @@ def _disclosure(label: str) -> str:
     )
 
 
-def _evidence_label(value: object, bars: Mapping[str, object]) -> str:
+def _evidence_label(value: object, bars: Mapping[str, object], *, trusted_provider_capture: bool = False) -> str:
     """Conservatively label deterministic fixtures as simulated evidence."""
     requested = value if isinstance(value, str) and value in EVIDENCE_LABELS else "SIMULATED"
     sources = [
@@ -96,6 +97,10 @@ def _evidence_label(value: object, bars: Mapping[str, object]) -> str:
     ]
     if any(source.strip().lower() == "deterministic-fixture" for source in sources):
         return "SIMULATED"
+    if requested == "CAPTURED_PROVIDER":
+        normalized = {source.strip().lower() for source in sources}
+        if not trusted_provider_capture or len(normalized) != 1 or not normalized <= APPROVED_PUBLIC_PROVIDERS:
+            return "SIMULATED"
     return requested
 
 
@@ -532,6 +537,7 @@ def _build_validation_report(
     provider: object = None,
     macro_evidence: object = None,
     proposed_levels: object = None,
+    trusted_provider_capture: bool = False,
 ) -> dict:
     """Build the complete local-safe report contract from injected evidence.
 
@@ -546,7 +552,14 @@ def _build_validation_report(
 
     capture_times = [item["captured_at"] for item in bars.values() if item["captured_at"]]
     capture_time = max(capture_times) if capture_times else None
-    safe_label = _evidence_label(evidence_label, bars)
+    safe_label = _evidence_label(evidence_label, bars, trusted_provider_capture=trusted_provider_capture)
+    if safe_label == "CAPTURED_PROVIDER" and (
+        not data_pass
+        or set(bars) != set(REQUIRED_TIMEFRAMES)
+        or not isinstance(data_provider, str)
+        or data_provider.strip().lower() not in APPROVED_PUBLIC_PROVIDERS
+    ):
+        safe_label = "SIMULATED"
     safe_run_id = _json_safe_string(run_id, "invalid-run-id")
     macro = dict(macro_evidence) if isinstance(macro_evidence, Mapping) else {}
     macro_verified = _macro_verified(macro, capture_time)
@@ -610,7 +623,11 @@ def _build_validation_report(
         "disclosure": _disclosure(safe_label),
         "audit": {},
     }
-    report["audit"] = audit_validation_report(report, {normalized: rows} if normalized else {})
+    report["audit"] = _safe_audit_validation_report(
+        report,
+        {normalized: rows} if normalized else {},
+        trusted_provider_capture=trusted_provider_capture,
+    )
     return report
 
 
@@ -680,7 +697,9 @@ def _claim_reference_matches_kind(kind: str, reference: object) -> bool:
     return False
 
 
-def _audit_validation_report(report: object, grounding: object) -> dict:
+def _audit_validation_report(
+    report: object, grounding: object, *, trusted_provider_capture: bool = False
+) -> dict:
     """Audit a structured report against injected bars and calculated features."""
     issues: list[dict] = []
     if not isinstance(report, Mapping):
@@ -711,7 +730,16 @@ def _audit_validation_report(report: object, grounding: object) -> dict:
     )
     capture_times = [item["captured_at"] for item in bars.values() if item["captured_at"]]
     capture_time = max(capture_times) if capture_times else None
-    expected_label = _evidence_label(label, bars)
+    expected_label = _evidence_label(
+        label, bars, trusted_provider_capture=trusted_provider_capture
+    )
+    if expected_label == "CAPTURED_PROVIDER" and (
+        data_reasons
+        or set(bars) != set(REQUIRED_TIMEFRAMES)
+        or not isinstance(data_provider, str)
+        or data_provider.strip().lower() not in APPROVED_PUBLIC_PROVIDERS
+    ):
+        expected_label = "SIMULATED"
     if label in EVIDENCE_LABELS and label != expected_label:
         issues.append(_issue(
             "EVIDENCE_LABEL_SOURCE_MISMATCH",
@@ -992,10 +1020,16 @@ def _audit_validation_report(report: object, grounding: object) -> dict:
     }
 
 
-def audit_validation_report(report: object, grounding: object) -> dict:
-    """Fail-safe public audit boundary for all JSON-compatible inputs."""
+def _safe_audit_validation_report(
+    report: object, grounding: object, *, trusted_provider_capture: bool = False
+) -> dict:
+    """Fail-safe audit wrapper; trust must be supplied by an internal caller."""
     try:
-        result = _audit_validation_report(report, grounding)
+        result = _audit_validation_report(
+            report,
+            grounding,
+            trusted_provider_capture=trusted_provider_capture,
+        )
         json.dumps(result, allow_nan=False)
         return result
     except (ArithmeticError, KeyError, OSError, TypeError, ValueError, OverflowError):
@@ -1005,6 +1039,11 @@ def audit_validation_report(report: object, grounding: object) -> dict:
             "issue_count": 1,
             "issues": [_issue("AUDIT_INPUT_UNSAFE", "Input could not be safely audited")],
         }
+
+
+def audit_validation_report(report: object, grounding: object) -> dict:
+    """Public audit boundary; provider capture is always untrusted here."""
+    return _safe_audit_validation_report(report, grounding)
 
 
 def build_validation_report(
@@ -1034,4 +1073,25 @@ def build_validation_report(
                 if isinstance(evidence_label, str) and evidence_label in EVIDENCE_LABELS
                 else "SIMULATED"
             ),
+        )
+
+
+def build_captured_provider_validation_report(
+    pair: object, grounding: object, *, run_id: object
+) -> dict:
+    """Trusted runtime/read-path builder for internally fetched public bars.
+
+    API callers and model output have no route to select this function or its
+    label. Provider approval and complete-history consistency remain binding.
+    """
+    try:
+        result = _build_validation_report(
+            pair, grounding, run_id=run_id, evidence_label="CAPTURED_PROVIDER",
+            trusted_provider_capture=True,
+        )
+        json.dumps(result, allow_nan=False)
+        return result
+    except (ArithmeticError, KeyError, OSError, TypeError, ValueError, OverflowError):
+        return _build_validation_report(
+            "INVALID/PAIR", {}, run_id=_json_safe_string(run_id, "invalid-run-id")
         )

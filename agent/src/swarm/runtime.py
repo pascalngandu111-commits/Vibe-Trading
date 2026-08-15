@@ -399,8 +399,22 @@ class SwarmRuntime:
                     run.final_report = task_summaries[tid]
                     break
 
+        validation_metadata: dict[str, object] = {}
+        if run.preset_name == "tradecorefx_forex_desk":
+            from src.swarm.tradecorefx_validation import build_captured_provider_validation_report
+
+            # Only this internal post-fetch path may promote evidence to
+            # CAPTURED_PROVIDER. Worker narrative is never parsed as evidence.
+            run.tradecorefx_validation = build_captured_provider_validation_report(
+                run.user_vars.get("target"), run.grounding_data or {}, run_id=run.id,
+            )
+            validation_metadata = {
+                "tradecorefx_decision": run.tradecorefx_validation["final_decision"],
+                "tradecorefx_validation_ready": bool(run.tradecorefx_validation.get("audit", {}).get("passed")),
+            }
+
         self._store.update_run(run)
-        self._emit_event(run_id, self._make_event("run_completed", data={"status": final_status.value}))
+        self._emit_event(run_id, self._make_event("run_completed", data={"status": final_status.value, **validation_metadata}))
 
         # Cleanup cancel event and live callback
         with self._lock:
