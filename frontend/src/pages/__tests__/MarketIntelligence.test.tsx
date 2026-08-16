@@ -6,22 +6,138 @@ import { api } from "@/lib/api";
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, api: { ...actual.api, listSwarmRuns: vi.fn(), getSwarmRun: vi.fn() } };
+  return { ...actual, api: { ...actual.api, listSwarmRuns: vi.fn(), getSwarmRun: vi.fn(), createTradeCoreFXRun: vi.fn() } };
 });
 
 const summary = { id:"r1", preset_name:"tradecorefx_forex_desk", status:"completed", created_at:"2026-08-14T12:00:00Z", task_count:5, completed_count:5, is_tradecorefx:true, pair:"EUR/USD", requested_horizon:"swing" };
 const detail = { ...summary, completed_at:"2026-08-14T13:00:00Z", llm_provider:null, model:null, integrity_state:"VERIFIED", audit_state:"PASSED", tradecorefx_validation:{ pair:"EUR/USD", final_decision:"WAIT", evidence_label:"CAPTURED_PROVIDER", data_provider:"yfinance", capture_time:"2026-08-14T12:00:00Z", confidence:{total:50,cap:50}, binding_data_gate:{status:"PASS",reasons:[]}, binding_risk_gate:{status:"FAIL",reasons:["verified current macro support unavailable"]}, macro:{status:"UNAVAILABLE"}, audit:{passed:true}, dissent:[], recheck_condition:"Refresh failed evidence", disclosure:"Decision support only; no guarantee.", bar_evidence:Object.fromEntries(["1D","4H","1H"].map(tf=>[tf,{source:"yfinance",captured_at:"2026-08-14T12:00:00Z",last_bar_at:"2026-08-14T11:00:00Z",freshness:"FRESH",history_status:"ok",bars:220}])) } };
+const created = {id:"r-new", pair:"EUR/USD", requested_horizon:"multi-timeframe 1D/4H/1H", status:"pending", navigation:{detail_path:"/market-intelligence?run=r-new"}};
+const pending = {...detail, id:"r-new", status:"pending", integrity_state:"PENDING", audit_state:"PENDING", tradecorefx_validation:null};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
 
 describe("MarketIntelligence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.listSwarmRuns).mockResolvedValue([summary]);
     vi.mocked(api.getSwarmRun).mockResolvedValue(detail);
+    vi.mocked(api.createTradeCoreFXRun).mockResolvedValue(created);
   });
   it("requests the TradeCoreFX preset from the server", async () => {
     render(<MarketIntelligence/>);
     await screen.findByText("WAIT");
     expect(api.listSwarmRuns).toHaveBeenCalledWith("tradecorefx_forex_desk");
+  });
+  it("submits a pair once, refreshes the filtered list, and selects the pending run", async () => {
+    let resolveCreate!: (value: Awaited<ReturnType<typeof api.createTradeCoreFXRun>>) => void;
+    const create = new Promise<Awaited<ReturnType<typeof api.createTradeCoreFXRun>>>(resolve => { resolveCreate = resolve; });
+    vi.mocked(api.createTradeCoreFXRun).mockReturnValueOnce(create);
+    vi.mocked(api.listSwarmRuns).mockResolvedValueOnce([summary]).mockResolvedValueOnce([{...summary,id:"r-new",status:"pending"}]);
+    vi.mocked(api.getSwarmRun).mockResolvedValueOnce(detail).mockResolvedValueOnce(pending);
+    render(<MarketIntelligence/>); await screen.findByText("WAIT");
+    const button = screen.getByRole("button", {name:"Start analysis"});
+    await userEvent.click(button); await userEvent.click(button);
+    expect(api.createTradeCoreFXRun).toHaveBeenCalledTimes(1);
+    resolveCreate(created);
+    expect(await screen.findByText("EUR/USD analysis pending.")).toBeInTheDocument();
+    expect(api.listSwarmRuns).toHaveBeenLastCalledWith("tradecorefx_forex_desk");
+    expect(await screen.findByText("PENDING")).toBeInTheDocument();
+  });
+  it("clears initial loading for a failed submission and ignores the late initial response", async () => {
+    const initialList = deferred<typeof summary[]>();
+    const createRequest = deferred<Awaited<ReturnType<typeof api.createTradeCoreFXRun>>>();
+    vi.mocked(api.listSwarmRuns).mockReturnValueOnce(initialList.promise);
+    vi.mocked(api.createTradeCoreFXRun).mockReturnValueOnce(createRequest.promise);
+    render(<MarketIntelligence/>);
+
+    expect(screen.getByText("Loading market intelligence…")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    expect(screen.queryByText("Loading market intelligence…")).not.toBeInTheDocument();
+    createRequest.reject(new Error("create failed"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("create failed");
+
+    initialList.resolve([summary]);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("create failed"));
+    expect(api.getSwarmRun).not.toHaveBeenCalled();
+  });
+  it("selects a created run and ignores a late initial response", async () => {
+    const initialList = deferred<typeof summary[]>();
+    const createRequest = deferred<Awaited<ReturnType<typeof api.createTradeCoreFXRun>>>();
+    vi.mocked(api.listSwarmRuns).mockReturnValueOnce(initialList.promise).mockResolvedValueOnce([{...summary, id:"r-new", status:"pending"}]);
+    vi.mocked(api.createTradeCoreFXRun).mockReturnValueOnce(createRequest.promise);
+    vi.mocked(api.getSwarmRun).mockResolvedValueOnce(pending);
+    render(<MarketIntelligence/>);
+
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    createRequest.resolve(created);
+    expect(await screen.findByText("PENDING")).toBeInTheDocument();
+    expect(screen.queryByText("Loading market intelligence…")).not.toBeInTheDocument();
+
+    initialList.resolve([summary]);
+    await waitFor(() => expect(screen.getByText("PENDING")).toBeInTheDocument());
+    expect(screen.queryByText("WAIT")).not.toBeInTheDocument();
+  });
+  it.each(["success", "error"] as const)("lets submission supersede a stale refresh %s", async (outcome) => {
+    const refresh = deferred<typeof summary[]>();
+    vi.mocked(api.listSwarmRuns)
+      .mockResolvedValueOnce([summary])
+      .mockReturnValueOnce(refresh.promise)
+      .mockResolvedValueOnce([{...summary, id:"r-new", status:"pending"}]);
+    vi.mocked(api.getSwarmRun).mockResolvedValueOnce(detail).mockResolvedValueOnce(pending);
+    render(<MarketIntelligence/>);
+    await screen.findByText("WAIT");
+
+    await userEvent.click(screen.getByRole("button", {name:/refresh/i}));
+    expect(screen.getByText("Loading market intelligence…")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    expect(await screen.findByText("PENDING")).toBeInTheDocument();
+
+    if (outcome === "success") refresh.resolve([summary]);
+    else refresh.reject(new Error("stale refresh failed"));
+    await waitFor(() => expect(screen.getByText("PENDING")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading market intelligence…")).not.toBeInTheDocument();
+  });
+  it("shows custom pair state and submits the visible custom input", async () => {
+    render(<MarketIntelligence/>); await screen.findByText("WAIT");
+    const input = screen.getByLabelText("FX pair");
+    await userEvent.clear(input); await userEvent.type(input, "EUR/GBP");
+    expect(screen.getByLabelText("Common beta pairs")).toHaveValue("");
+    expect(screen.getByRole("option", {name:"Custom pair"})).toHaveProperty("selected", true);
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    expect(api.createTradeCoreFXRun).toHaveBeenCalledWith("EUR/GBP");
+  });
+  it("updates the visible input and submission when a common pair is selected", async () => {
+    render(<MarketIntelligence/>); await screen.findByText("WAIT");
+    const input = screen.getByLabelText("FX pair");
+    await userEvent.clear(input); await userEvent.type(input, "EUR/GBP");
+    await userEvent.selectOptions(screen.getByLabelText("Common beta pairs"), "EUR/USD");
+    expect(input).toHaveValue("EUR/USD");
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    expect(api.createTradeCoreFXRun).toHaveBeenCalledWith("EUR/USD");
+  });
+  it("keeps lowercase compact input visibly custom until server normalization", async () => {
+    vi.mocked(api.createTradeCoreFXRun).mockResolvedValueOnce({...created, pair:"EUR/GBP"});
+    render(<MarketIntelligence/>); await screen.findByText("WAIT");
+    const input = screen.getByLabelText("FX pair");
+    await userEvent.clear(input); await userEvent.type(input, "eurgbp");
+    expect(screen.getByLabelText("Common beta pairs")).toHaveValue("");
+    expect(input).toHaveValue("eurgbp");
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    expect(api.createTradeCoreFXRun).toHaveBeenCalledWith("eurgbp");
+    expect(await screen.findByText("EUR/GBP analysis pending.")).toBeInTheDocument();
+  });
+  it("announces validation and server errors accessibly", async () => {
+    vi.mocked(api.createTradeCoreFXRun).mockRejectedValueOnce(new Error("Enter a supported beta FX pair"));
+    render(<MarketIntelligence/>); await screen.findByText("WAIT");
+    const input = screen.getByLabelText("FX pair"); await userEvent.clear(input); await userEvent.type(input, "BTC/USD");
+    await userEvent.click(screen.getByRole("button", {name:"Start analysis"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a supported beta FX pair");
   });
   it("renders binding WAIT evidence and separate provider metadata without execution claims", async () => {
     render(<MarketIntelligence/>);
@@ -163,5 +279,27 @@ describe("MarketIntelligence", () => {
     resolveRefresh({ ...detail, id: "r1", requested_horizon: "refresh-stale" });
     await waitFor(() => expect(screen.queryByText(/refresh-stale/)).not.toBeInTheDocument());
     expect(screen.getByText(/manual-latest/)).toBeInTheDocument();
+  });
+  it("re-enables submission when a manual selection supersedes an in-flight create", async () => {
+    const secondSummary = { ...summary, id: "r2", pair: "GBP/USD" };
+    let resolveCreate!: (value: Awaited<ReturnType<typeof api.createTradeCoreFXRun>>) => void;
+    const create = new Promise<Awaited<ReturnType<typeof api.createTradeCoreFXRun>>>((resolve) => { resolveCreate = resolve; });
+    vi.mocked(api.createTradeCoreFXRun).mockReturnValueOnce(create);
+    vi.mocked(api.listSwarmRuns).mockResolvedValue([summary, secondSummary]);
+    vi.mocked(api.getSwarmRun).mockImplementation((id) => Promise.resolve(
+      id === "r2" ? { ...detail, id: "r2", requested_horizon: "manual-newest" } : detail,
+    ));
+    render(<MarketIntelligence/>);
+    await screen.findByText("WAIT");
+
+    await userEvent.click(screen.getByRole("button", { name: "Start analysis" }));
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /GBP\/USD/ }));
+    await screen.findByText(/manual-newest/);
+    resolveCreate({ id:"r-new", pair:"EUR/USD", requested_horizon:"multi-timeframe 1D/4H/1H", status:"pending", navigation:{detail_path:"/market-intelligence?run=r-new"} });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start analysis" })).toBeEnabled());
+    expect(screen.getByText(/manual-newest/)).toBeInTheDocument();
+    expect(api.listSwarmRuns).toHaveBeenCalledTimes(1);
   });
 });

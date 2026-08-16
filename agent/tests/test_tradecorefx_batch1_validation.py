@@ -11,10 +11,12 @@ import pytest
 
 from src.swarm.tradecorefx_validation import (
     audit_validation_report,
+    _build_trusted_macro_validation_report,
     build_validation_report,
     format_fx_price,
     normalize_forex_pair,
 )
+from src.swarm.tradecorefx_macro import TrustedMacroRegistry
 
 
 def _rows(pair: str, *, count: int = 220, stale: str | None = None) -> dict[str, list[dict]]:
@@ -43,9 +45,32 @@ def _rows(pair: str, *, count: int = 220, stale: str | None = None) -> dict[str,
 
 
 def _report(pair: str = "EUR/USD", grounding=None, **kwargs) -> dict:
+    macro = kwargs.pop("macro_evidence", None)
+    selected_grounding = grounding if grounding is not None else _rows(pair)
+    if macro is not None:
+        registry = TrustedMacroRegistry(
+            ("example.invalid",),
+            now=lambda: pd.Timestamp("2026-08-14T12:00:00Z").to_pydatetime(),
+        )
+        connector = {
+            "claim": macro.get("claim") if isinstance(macro, dict) else None,
+            "source_identity": macro.get("source") if isinstance(macro, dict) else None,
+            "observed_at": macro.get("observed_at") if isinstance(macro, dict) else None,
+            "retrieved_at": "2026-08-14T12:00:00+00:00",
+            "source_url": macro.get("url") if isinstance(macro, dict) else None,
+            "applicability": normalize_forex_pair(pair) or str(pair),
+            "provenance": "INTERNAL_CONNECTOR",
+        }
+        authorized = registry.authorize(connector)
+        return _build_trusted_macro_validation_report(
+            pair, selected_grounding,
+            run_id=f"fixture-{pair.replace('/', '-').lower()}",
+            registry=registry, authorized_macro=authorized,
+            proposed_levels=kwargs.get("proposed_levels"),
+        )
     return build_validation_report(
         pair,
-        grounding if grounding is not None else _rows(pair),
+        selected_grounding,
         run_id=f"fixture-{pair.replace('/', '-').lower()}",
         evidence_label="SIMULATED",
         **kwargs,
@@ -158,7 +183,7 @@ def test_provider_argument_never_overrides_evidence(provider: str | None) -> Non
     assert audit_validation_report(report, grounding)["passed"]
 
 
-@pytest.mark.parametrize("pair", ["EURUSD", "EUR/EUR", "BAD", "EUR//USD"])
+@pytest.mark.parametrize("pair", ["XAUUSD", "EUR/EUR", "BAD", "EUR//USD"])
 def test_unsupported_or_malformed_pair_is_safe(pair: str) -> None:
     assert _report(pair, _rows("EUR/USD"))["final_decision"] == "NO_TRADE_DATA"
 

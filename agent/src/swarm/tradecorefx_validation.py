@@ -28,6 +28,7 @@ CONFIDENCE_CAPS = {
     "risk_reward": 10,
 }
 _PAIR = re.compile(r"^(?P<base>[A-Z]{3})(?:/)?(?P<quote>[A-Z]{3})(?:\.FX)?$")
+BETA_CURRENCIES = frozenset({"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"})
 INVALID_DIRECTION_REASON = "INVALID_DIRECTION: direction must be LONG or SHORT"
 NON_FINITE_LEVEL_REASON = "NON_FINITE_LEVEL: entry, stop, and target must be finite"
 LEVEL_GROUNDING_REASON = "LEVEL_GROUNDING_FAILED: entry, stop, and target require matching evidence references"
@@ -117,14 +118,17 @@ def _json_safe_string(value: object, fallback: str) -> str:
 
 
 def normalize_forex_pair(value: object) -> str | None:
-    """Return canonical ``AAA/BBB`` syntax, or ``None`` for malformed input."""
+    """Return a canonical beta-universe pair, or ``None`` for unsafe input."""
     if not isinstance(value, str):
         return None
-    candidate = value.strip().upper()
-    if "/" not in candidate and not candidate.endswith(".FX"):
-        return None
+    candidate = re.sub(r"\s+", "", value).upper()
     match = _PAIR.fullmatch(candidate)
-    if match is None or match["base"] == match["quote"]:
+    if (
+        match is None
+        or match["base"] == match["quote"]
+        or match["base"] not in BETA_CURRENCIES
+        or match["quote"] not in BETA_CURRENCIES
+    ):
         return None
     return f"{match['base']}/{match['quote']}"
 
@@ -1060,7 +1064,7 @@ def build_validation_report(
     try:
         result = _build_validation_report(
             pair, grounding, run_id=run_id, evidence_label=evidence_label,
-            provider=provider, macro_evidence=macro_evidence,
+            provider=provider, macro_evidence=None,
             proposed_levels=proposed_levels,
         )
         json.dumps(result, allow_nan=False)
@@ -1088,6 +1092,40 @@ def build_captured_provider_validation_report(
         result = _build_validation_report(
             pair, grounding, run_id=run_id, evidence_label="CAPTURED_PROVIDER",
             trusted_provider_capture=True,
+        )
+        json.dumps(result, allow_nan=False)
+        return result
+    except (ArithmeticError, KeyError, OSError, TypeError, ValueError, OverflowError):
+        return _build_validation_report(
+            "INVALID/PAIR", {}, run_id=_json_safe_string(run_id, "invalid-run-id")
+        )
+
+
+def _build_trusted_macro_validation_report(
+    pair: object,
+    grounding: object,
+    *,
+    run_id: object,
+    registry: object,
+    authorized_macro: object,
+    proposed_levels: object = None,
+) -> dict:
+    """Internal connector path requiring a registry-owned authorization object."""
+    from src.swarm.tradecorefx_macro import TrustedMacroRegistry
+
+    if type(registry) is not TrustedMacroRegistry:
+        registry = None
+    try:
+        macro = registry.for_pair(authorized_macro, pair)
+    except (AttributeError, TypeError, ValueError):
+        macro = None
+    try:
+        result = _build_validation_report(
+            pair,
+            grounding,
+            run_id=run_id,
+            macro_evidence=macro,
+            proposed_levels=proposed_levels,
         )
         json.dumps(result, allow_nan=False)
         return result

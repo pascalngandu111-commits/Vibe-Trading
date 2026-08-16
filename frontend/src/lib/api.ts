@@ -147,6 +147,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ preset_name, user_vars }),
     }),
+  createTradeCoreFXRun: (pair: string) =>
+    request<TradeCoreFXRunCreated>("/market-intelligence/runs", {
+      method: "POST",
+      body: JSON.stringify({ pair }),
+    }),
   listSwarmRuns: (presetName?: string) => request<SwarmRunSummary[]>(
     presetName ? appendQueryParam("/swarm/runs", "preset_name", presetName) : "/swarm/runs",
   ),
@@ -270,6 +275,10 @@ export interface SwarmRunSummary {
 }
 
 export type TradeCoreFXDecision = "LONG_SETUP" | "SHORT_SETUP" | "WAIT" | "NO_TRADE_DATA";
+export interface TradeCoreFXRunCreated {
+  id: string; pair: string; requested_horizon: string; status: string;
+  navigation: { detail_path: string };
+}
 export type TradeCoreFXEvidenceLabel = "SIMULATED" | "CAPTURED_FIXTURE" | "CAPTURED_PROVIDER";
 export interface TradeCoreFXTimeframeSummary { last_bar_at?: string | null; freshness?: string; history_status?: string | null; bars?: number }
 export interface TradeCoreFXValidationReport {

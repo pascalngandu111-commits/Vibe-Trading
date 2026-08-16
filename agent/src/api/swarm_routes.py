@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import StreamingResponse
 
 # ---------------------------------------------------------------------------
@@ -18,6 +19,12 @@ from fastapi.responses import StreamingResponse
 
 _swarm_runtime = None
 TRADECOREFX_PRESET = "tradecorefx_forex_desk"
+TRADECOREFX_HORIZON = "multi-timeframe 1D/4H/1H"
+
+
+class TradeCoreFXRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    pair: str = Field(min_length=1, max_length=32)
 
 
 def _tradecorefx_view(run) -> tuple[dict | None, str]:
@@ -165,6 +172,33 @@ def register_swarm_routes(
             raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/market-intelligence/runs", dependencies=[Depends(require_auth)])
+    async def create_tradecorefx_run(payload: TradeCoreFXRunRequest, http_request: Request):
+        """Start the fixed TradeCoreFX beta workflow from a canonical FX pair."""
+        from src.swarm.tradecorefx_validation import normalize_forex_pair
+
+        if http_request.query_params:
+            raise HTTPException(status_code=422, detail="Query parameters are not accepted")
+        pair = normalize_forex_pair(payload.pair)
+        if pair is None:
+            raise HTTPException(status_code=422, detail="Enter a supported beta FX pair")
+        runtime = _get_swarm_runtime()
+        try:
+            run = runtime.start_run(
+                TRADECOREFX_PRESET,
+                {"target": pair, "horizon": TRADECOREFX_HORIZON},
+                include_shell_tools=_host_shell_tools_enabled_for_request(http_request),
+            )
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=503, detail="Market analysis could not be started")
+        return {
+            "id": run.id,
+            "pair": pair,
+            "requested_horizon": TRADECOREFX_HORIZON,
+            "status": run.status.value,
+            "navigation": {"detail_path": f"/market-intelligence?run={run.id}"},
+        }
 
     @app.get("/swarm/runs", dependencies=[Depends(require_auth)])
     async def list_swarm_runs(
