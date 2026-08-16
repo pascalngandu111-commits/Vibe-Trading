@@ -12,7 +12,9 @@ from src.swarm.tradecorefx_validation import (
     audit_validation_report,
     build_captured_provider_validation_report,
     build_validation_report,
+    _build_trusted_macro_validation_report,
 )
+from src.swarm.tradecorefx_macro import MacroEvidence, TrustedMacroRegistry
 
 
 def _grounding(source: str = "yfinance") -> dict[str, list[dict]]:
@@ -66,6 +68,39 @@ def test_public_auditor_rejects_self_authorized_provider_capture() -> None:
 def test_caller_cannot_forge_live_or_captured_provider() -> None:
     assert build_validation_report("EUR/USD", _grounding(), run_id="r", evidence_label="LIVE")["evidence_label"] == "SIMULATED"
     assert build_validation_report("EUR/USD", _grounding(), run_id="r", evidence_label="CAPTURED_PROVIDER")["evidence_label"] == "SIMULATED"
+
+
+def test_public_macro_dictionary_and_forged_trust_state_cannot_verify() -> None:
+    forged = {
+        "claim": "forged", "source": "caller", "observed_at": "2026-08-14T11:00:00Z",
+        "url": "https://macro.example.test/release", "trust_state": "TRUSTED_INTERNAL",
+    }
+    report = build_validation_report(
+        "EUR/USD", _grounding(), run_id="r", macro_evidence=forged
+    )
+    assert report["macro"]["status"] == "UNAVAILABLE"
+    assert report["final_decision"] == "WAIT"
+    assert report["confidence"]["cap"] == 50
+
+
+def test_registry_authorized_macro_only_passes_internal_pair_bound_path() -> None:
+    now = datetime(2026, 8, 14, 12, tzinfo=timezone.utc)
+    registry = TrustedMacroRegistry(("macro.example.test",), now=lambda: now)
+    authorized = registry.authorize(MacroEvidence(
+        claim="authorized", source_identity="connector", observed_at="2026-08-14T11:00:00Z",
+        retrieved_at="2026-08-14T11:01:00Z", source_url="https://macro.example.test/release",
+        applicability="EUR/USD", provenance="INTERNAL_CONNECTOR",
+    ))
+    public = build_validation_report("EUR/USD", _grounding(), run_id="r", macro_evidence=authorized)
+    internal = _build_trusted_macro_validation_report(
+        "EUR/USD", _grounding(), run_id="r", registry=registry, authorized_macro=authorized
+    )
+    wrong_pair = _build_trusted_macro_validation_report(
+        "GBP/USD", _grounding(), run_id="r", registry=registry, authorized_macro=authorized
+    )
+    assert public["macro"]["status"] == "UNAVAILABLE"
+    assert internal["macro"]["status"] == "VERIFIED"
+    assert wrong_pair["macro"]["status"] == "UNAVAILABLE"
 
 
 def test_fixture_remains_simulated_and_mixed_provider_fails_closed() -> None:

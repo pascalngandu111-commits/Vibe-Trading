@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Database, RefreshCw } from "lucide-react";
-import { api, type SwarmRunDetail, type SwarmRunSummary, type TradeCoreFXDecision } from "@/lib/api";
+import { api, type SwarmRunDetail, type SwarmRunSummary, type TradeCoreFXDecision, type TradeCoreFXRunCreated } from "@/lib/api";
 
 type TradeCoreFXDisplayState = TradeCoreFXDecision | "PENDING" | "UNAVAILABLE";
+const commonPairs = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "USD/CAD", "NZD/USD"];
 
 const unavailable = (value?: string | null) => value || "Unavailable";
 const stamp = (value?: string | null) => {
@@ -34,6 +35,11 @@ export function MarketIntelligence() {
   const [selected, setSelected] = useState<SwarmRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pair, setPair] = useState("EUR/USD");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState<string | null>(null);
+  const pairInput = useRef<HTMLInputElement>(null);
+  const submitInFlight = useRef(false);
   const requestGeneration = useRef(0);
   const load = useCallback(async () => {
     const generation = ++requestGeneration.current;
@@ -61,10 +67,53 @@ export function MarketIntelligence() {
       if (generation === requestGeneration.current) setError("Run detail is unavailable");
     }
   };
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
+    const generation = ++requestGeneration.current;
+    setLoading(false); setSubmitting(true); setSubmitMessage("Starting analysis…"); setError(null);
+    let created: TradeCoreFXRunCreated | undefined;
+    try {
+      created = await api.createTradeCoreFXRun(pair);
+    } catch (cause) {
+      if (generation === requestGeneration.current) {
+        setSubmitMessage(null);
+        setError(cause instanceof Error ? cause.message : "Market analysis could not be started");
+        pairInput.current?.focus();
+      }
+    } finally {
+      submitInFlight.current = false;
+      setSubmitting(false);
+    }
+    if (!created || generation !== requestGeneration.current) return;
+    setSubmitMessage(`${created.pair} analysis ${created.status}.`);
+    try {
+      const list = await api.listSwarmRuns("tradecorefx_forex_desk");
+      if (generation !== requestGeneration.current) return;
+      setRuns(list);
+      const detail = await api.getSwarmRun(created.id);
+      if (generation === requestGeneration.current) setSelected(detail);
+    } catch (cause) {
+      if (generation === requestGeneration.current) {
+        setSubmitMessage(null);
+        setError(cause instanceof Error ? cause.message : "Market intelligence is unavailable");
+      }
+    }
+  };
   const report = selected?.tradecorefx_validation;
   const decision = safeDecision(selected);
   return <main className="min-h-screen p-4 md:p-8"><div className="mx-auto max-w-7xl space-y-6">
     <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-5"><div><p className="text-xs font-semibold uppercase tracking-[.2em] text-primary">TradeCoreFX</p><h1 className="text-3xl font-bold">Market Intelligence</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Authenticated, deterministic decision support. Conditional setup states are not orders, predictions, or guarantees.</p></div><button aria-label="Refresh TradeCoreFX runs" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-md border px-4 py-2"><RefreshCw className="h-4 w-4"/>Refresh</button></header>
+    <form onSubmit={submit} className="rounded-lg border p-5" aria-labelledby="pair-analysis-heading">
+      <h2 id="pair-analysis-heading" className="text-lg font-semibold">Start pair analysis</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Fixed methodology: multi-timeframe 1D/4H/1H. Provider availability varies; unavailable or incomplete data fails safely.</p>
+      <div className="mt-4 flex flex-wrap items-end gap-3"><div><label htmlFor="fx-pair" className="block text-sm font-medium">FX pair</label><input ref={pairInput} id="fx-pair" name="pair" value={pair} onChange={e=>setPair(e.target.value)} required maxLength={32} aria-describedby="pair-help" className="mt-1 min-h-11 rounded-md border bg-background px-3"/></div>
+      <div><label htmlFor="common-pair" className="block text-sm font-medium">Common beta pairs</label><select id="common-pair" value={commonPairs.includes(pair) ? pair : ""} onChange={e=>{ if (e.target.value) setPair(e.target.value); }} className="mt-1 min-h-11 rounded-md border bg-background px-3"><option value="">Custom pair</option>{commonPairs.map(value=><option key={value} value={value}>{value}</option>)}</select></div>
+      <button type="submit" disabled={submitting} className="min-h-11 rounded-md bg-primary px-5 font-semibold text-primary-foreground disabled:opacity-60">{submitting ? "Starting…" : "Start analysis"}</button></div>
+      <p id="pair-help" className="mt-2 text-xs text-muted-foreground">Enter AAA/BBB, AAABBB, or AAABBB.FX using supported beta currencies.</p>
+      <div role={submitMessage ? "status" : undefined} aria-live="polite" className="mt-2 min-h-5 text-sm">{submitMessage}</div>
+    </form>
     {loading && <div role="status" className="rounded-md border p-8">Loading market intelligence…</div>}
     {!loading && error && <div role="alert" className="rounded-md border border-amber-500/40 p-5"><AlertTriangle className="inline h-5 w-5"/> {error}</div>}
     {!loading && !error && runs.length === 0 && <div className="rounded-md border border-dashed p-10 text-center"><Database className="mx-auto h-8 w-8"/><h2 className="mt-3 font-semibold">No TradeCoreFX runs yet</h2><p className="mt-2 font-semibold">Decision: {decision}</p><p className="text-sm text-muted-foreground">Run the TradeCoreFX Forex Desk to capture evidence.</p></div>}
